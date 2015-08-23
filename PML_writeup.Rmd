@@ -1,0 +1,230 @@
+---
+title: "Weight Lifting Exercise Analysis"
+author: "Dinh Huy Hoang"
+date: "August 19, 2015"
+output: html_document
+---
+
+
+##Executive Summary
+
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+####**Data**
+
+- The training data for this project are available here: [plm-training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+- The test data are available here: [pml-testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The data for this project come from this [source](http://groupware.les.inf.puc-rio.br/har) 
+
+####**Goal**
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. We will use 39 variables to predict with, and detail how to build the best model, cross validation, sample error and why the model is best choice. We will also use the prediction model to predict 20 different test cases.
+
+
+###**Reproduceability - Setting the seed for overall and loading R packages**
+```{r, message=FALSE}
+set.seed(6868)
+library(caret)
+library(randomForest)
+library(doParallel)
+
+```
+
+##**Load datasets and preliminary cleaning**
+
+Assume the datasets downloaded and save both into my current working directory and subdir ML (~/ML), some missing values are coded as string "#DIV/0!" or "" or "NA" - these will be changed to NA. We also notice that both datasets contain columns with all missing values, these will be deleted.
+
+```{r}
+
+# Load the training dataset and replacing all missing with "NA"
+train.dataset <- read.csv("~/ML/pml-training.csv", na.strings=c("NA","#DIV/0!", ""))
+
+# Load the testing dataset and replacing all missing with "NA"
+test.dataset <- read.csv('~/ML/pml-testing.csv', na.strings=c("NA","#DIV/0!", ""))
+
+# Check dim
+dim(train.dataset)
+dim(test.dataset)
+
+```
+
+**Clean up NA data**
+```{r}
+# Delete columns with all missing values
+train.dataset<-train.dataset[,colSums(is.na(train.dataset)) == 0]
+test.dataset <-test.dataset[,colSums(is.na(test.dataset)) == 0]
+
+```
+
+**Further clean up data**
+
+According to the details mentioned in http://groupware.les.inf.puc-rio.br/har, the first seven variables such as X,user_name, timestamps, window are not highly significant in predicting the "Classe"" variable of the dataset. Therefore, we have removed the irrelevant variables
+
+```{R}
+#Remove columns 1 -7 as it is not needed.
+train.dataset <-train.dataset[,c(8:60)]
+test.dataset <-test.dataset[,c(8:60)]
+```
+
+**Remove all high correlation more than 80%**
+```{r, message=FALSE}
+#Find the Correlation
+cor.matrix <- cor(na.omit(train.dataset[sapply(train.dataset, is.numeric)]))
+
+```
+
+With the testing, there is no different of final result after removal of high correlation variables equal, more than 80% or 90%, therefore we will remove all high correlation variables equal or more than 80%
+
+```{r, message=FALSE}
+#Remove all high correlation more than 80%.
+rm.cor <- findCorrelation(cor.matrix, cutoff = .80, verbose = TRUE)
+train.dataset <- train.dataset[,-rm.cor]
+dim(train.dataset)
+unique(train.dataset$classe)
+```
+
+
+After cleaning data, we will have final train.dataset with 19622 samples, 40 vaiables. The train.dataset will be used for next steps to build prediction model.
+
+##**Split the data**
+```{r}
+set.seed(6868)
+#splitting data 70% for training and 30% for Testing
+ind.train <- createDataPartition(y = train.dataset$classe, p=0.7,list=FALSE)
+training <- train.dataset[ind.train,]
+testing <- train.dataset[-ind.train,]
+
+dim(training)
+dim(testing)
+
+# Plot the Levels of the variable classe in the training dataset
+plot(training$classe, col=rainbow(5), main="Levels of the variable classe in the training dataset", 
+     xlab="classe levels", ylab= "Frequency")
+```
+
+
+##**Train the Model**
+
+Decision Tree, Random forest(rf), and Linear discriminant analysis(lda) algorithm are used to get highest accuracy with available 39 predictor variables. 
+
+####**Fitting Model Selection**
+```{r}
+#Decision tree, Random forest(rf), and linear discriminant analysis(lda) model and compare   
+set.seed(6868)
+fit.model.tree <- train(classe ~ .,method="rpart",data=training)
+fit.model.rf <- train(classe ~ .,  method = 'rf',data=training)       
+fit.model.lda <-train(classe ~ ., method = 'lda',data = training) 
+
+#Print
+print(fit.model.rf)
+```
+
+Used the Random Forest algorithm to give highest accuracy with available 39 predictor variables it is 98.6% compare to 50% Tree algorithm and 64% Linear discriminant analysis (Appendix 1)
+
+####**Cross validation**
+
+The Random Forest is one of the best performing method, but according to Prof Leek we must do cross validation to avoid overfitting when using it. The goal of cross-validation is to define a data set to "test" the model in the training phase in order to limit overfitting and give an insight on how the model will generalize to test data set [Wikipedia](https://en.wikipedia.org/wiki/Cross-validation_(statistics))
+
+For this analysis, a K-fold cross-validation will be used. Taking into account the data size (almost 14,000 samples) the number of fold is set to 5 for calculation performance while maintaining an acceptable level of bias. For the caret package's train() function, cross-validation will be performed when method is set to cv and the number of folds is specified as number in train control function trainControl() Train the model:
+
+```{r}
+set.seed(6868)
+train.control <- trainControl(method="cv",number=5, allowParallel = TRUE)
+fit.model.rf <- train(classe ~ .,  method = 'rf',data=training, trControl=train.control)
+print(fit.model.rf)
+
+#Plot Resampling Results - Cross Validation.
+plot(fit.model.rf, main="Resampling Results - Cross Validation")
+
+```
+
+We will have the final model is Random Forest (fit.model.rf) with highest accuracy nearly 99%
+
+*Notes:* The train function will take all 39 variables as predictors, With the Random Forest algorithm will take approximately 60 minutes to complete with Window 64 bits, i5 Chipset and 4 GB RAM
+
+
+##**Prediction with testing data**
+
+As we have splitted the data into two sets, we have trained our model with training data. Now, We have our ready model and we will use the rest of 30% of data to test the model
+
+**Predict Values**
+```{r}
+#Use best fit to predict testing data 
+set.seed(6868)
+prediction_rf <- predict(fit.model.rf, testing)
+table(prediction_rf, testing$classe)
+
+```
+
+**Accuracy of prediction**
+
+```{r}
+set.seed(6868)
+postResample(prediction_rf, testing$classe)
+
+```
+
+**Expected out of sample error**
+
+We can find the accuracy of predictions is about 99% therefore the expected out of sample error is 1% (1 - 0.99)
+
+**Predict 20 test cases**
+
+Finally, the random forest model after fine tuning with cross validation is used to predict 20 test cases available in the test data loaded at the beginning of the project.
+
+```{r}
+set.seed(6868)
+prediction.result <- predict(fit.model.rf, test.dataset)
+print(prediction.result)
+
+
+```
+
+
+##**Conclusion**
+
+Random Forest algorithm performed better than Decision Trees or Linear discriminant analysis. With the 39 predictor variables, the Accuracy for Random Forest model is nearly 99% compared to 50% Decision Tree and 64% Linear Discriminant Analysis. The random Forest model is chosen because of highest accuracy(99%). The expected out of sample error is estimated at 1% (out of sample error is calculated as 1 - accuracy) for predictions made against the cross validation set. Our Test data set comprises 20 cases. With an accuracy 99% on our cross-validation data, we can expect that very few, or none, of the test samples will be miss classified. Random Forest algorithm works best for our Weight Lifting Exercise Analysis.
+
+
+
+
+
+##Appendix
+
+###Appendix 1
+
+**Result of Fitting Model Selection**
+
+```{r}
+set.seed(6868)
+print(fit.model.tree)
+print(fit.model.lda)
+```
+
+###Appendix 2
+
+####**Create Function pml_write_files**
+```{r}
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+```
+
+####**Prediction 20 test cases. It will generate 20 text files at current working directory(~/ML)**
+```{r}
+prediction.result <- predict(fit.model.rf, test.dataset);
+print(prediction.result);
+
+#Write result to 20 text files
+pml_write_files(as.vector(prediction.result))
+```
+
+*Notes*: Submitted 20 test cases and 100% correctly.
